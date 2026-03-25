@@ -304,6 +304,10 @@ body {
   color: #000; overflow: hidden;
   word-break: break-word;
   white-space: pre-wrap;
+  display: flex; align-items: flex-start;
+}
+.preview-label > span {
+  display: block; width: 100%;
 }
 .preview-empty {
   aspect-ratio: 63.5 / 46.6;
@@ -568,7 +572,7 @@ function renderPreview() {
       if (i < pg.length) {
         // Escape HTML
         const safe = pg[i].replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        cells += `<div class="preview-label">${safe}</div>`;
+        cells += `<div class="preview-label"><span>${safe}</span></div>`;
       } else {
         cells += `<div class="preview-empty"></div>`;
       }
@@ -579,6 +583,20 @@ function renderPreview() {
     </div>`;
   });
   scroll.innerHTML = html;
+
+  // Adaptive font sizing: shrink text that overflows its label box
+  requestAnimationFrame(() => {
+    scroll.querySelectorAll('.preview-label').forEach(label => {
+      const span = label.querySelector('span');
+      if (!span) return;
+      let fs = 5.5;
+      const minFs = 2.5;
+      while (fs > minFs && span.scrollHeight > label.clientHeight - 8) {
+        fs -= 0.3;
+        span.style.fontSize = fs + 'px';
+      }
+    });
+  });
 }
 
 // ======================================================
