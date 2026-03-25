@@ -295,19 +295,10 @@ body {
   border: 1px solid #ddd; border-radius: 5px;
   overflow: hidden; box-shadow: 0 1px 6px rgba(0,0,0,0.05);
 }
-.preview-label {
+.preview-label-canvas {
+  width: 100%;
   aspect-ratio: 63.5 / 46.6;
-  border: 0.5px solid #bbb;
-  padding: 4px 5px;
-  font-size: 5.5px; line-height: 1.3;
-  font-family: 'DM Sans', sans-serif;
-  color: #000; overflow: hidden;
-  word-break: break-word;
-  white-space: pre-wrap;
-  display: flex; align-items: flex-start;
-}
-.preview-label > span {
-  display: block; width: 100%;
+  display: block;
 }
 .preview-empty {
   aspect-ratio: 63.5 / 46.6;
@@ -436,13 +427,13 @@ const GRID_H = ROWS * BLOCK_H;
 const START_X = Math.floor((PAGE_W - GRID_W) / 2);
 const START_Y = Math.floor((PAGE_H - GRID_H) / 2);
 
-// Same as Python paci.py
-const TEXT_PAD_X = 18;   // px
-const TEXT_PAD_Y = 14;   // px
-const BORDER_W = 1;      // px
-const FONT_START = 40;   // px (same as Python START_FONT_SIZE)
-const FONT_MIN = 30;      // px (same as Python MIN_FONT_SIZE)
-const SPACING_START = 2; // px (same as Python LINE_SPACING_START)
+// Padding scaled to 300 DPI (~ 3mm horizontal, 2.5mm vertical)
+const TEXT_PAD_X = mmToPx(3);    // ~35 px at 300dpi
+const TEXT_PAD_Y = mmToPx(2.5);  // ~30 px at 300dpi
+const BORDER_W = 2;              // px
+const FONT_START = 42;           // px — start large
+const FONT_MIN = 10;             // px — allow small text for dense content
+const SPACING_START = 4;         // px — more line spacing range
 
 // ======================================================
 // RENDER UI
@@ -570,9 +561,7 @@ function renderPreview() {
     let cells = '';
     for (let i = 0; i < PER_PAGE; i++) {
       if (i < pg.length) {
-        // Escape HTML
-        const safe = pg[i].replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        cells += `<div class="preview-label"><span>${safe}</span></div>`;
+        cells += `<canvas class="preview-label-canvas" data-page="${pi}" data-idx="${i}"></canvas>`;
       } else {
         cells += `<div class="preview-empty"></div>`;
       }
@@ -584,17 +573,27 @@ function renderPreview() {
   });
   scroll.innerHTML = html;
 
-  // Adaptive font sizing: shrink text that overflows its label box
+  // Render each label on its own canvas using exact same logic as PDF
   requestAnimationFrame(() => {
-    scroll.querySelectorAll('.preview-label').forEach(label => {
-      const span = label.querySelector('span');
-      if (!span) return;
-      let fs = 5.5;
-      const minFs = 2.5;
-      while (fs > minFs && span.scrollHeight > label.clientHeight - 8) {
-        fs -= 0.3;
-        span.style.fontSize = fs + 'px';
-      }
+    scroll.querySelectorAll('.preview-label-canvas').forEach(cvs => {
+      const pi = parseInt(cvs.dataset.page);
+      const idx = parseInt(cvs.dataset.idx);
+      const text = pages[pi][idx];
+      if (!text) return;
+
+      // Use the same resolution as PDF labels
+      cvs.width = BLOCK_W;
+      cvs.height = BLOCK_H;
+
+      const ctx = cvs.getContext('2d');
+      ctx.textBaseline = 'top';
+
+      // White background
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, BLOCK_W, BLOCK_H);
+
+      // Draw using same function as PDF
+      drawLabel(ctx, 0, 0, BLOCK_W, BLOCK_H, text);
     });
   });
 }
@@ -621,18 +620,51 @@ function wrapParagraph(ctx, paragraph, font, maxWidth) {
   ctx.font = font;
   const words = paragraph.split(/\s+/);
   if (!words.length || (words.length === 1 && !words[0])) return [''];
+
+  // Helper: break a single long word into chunks that fit maxWidth
+  function breakWord(word) {
+    const chunks = [];
+    let current = '';
+    for (let c = 0; c < word.length; c++) {
+      const test = current + word[c];
+      if (ctx.measureText(test).width > maxWidth && current) {
+        chunks.push(current);
+        current = word[c];
+      } else {
+        current = test;
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
   const lines = [];
-  let current = words[0];
-  for (let i = 1; i < words.length; i++) {
-    const test = current + ' ' + words[i];
-    if (ctx.measureText(test).width <= maxWidth) {
-      current = test;
+  let current = '';
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    // If this single word is wider than maxWidth, break it by character
+    if (ctx.measureText(word).width > maxWidth) {
+      if (current) { lines.push(current); current = ''; }
+      const broken = breakWord(word);
+      for (let b = 0; b < broken.length - 1; b++) lines.push(broken[b]);
+      current = broken[broken.length - 1] || '';
+      continue;
+    }
+
+    if (!current) {
+      current = word;
     } else {
-      lines.push(current);
-      current = words[i];
+      const test = current + ' ' + word;
+      if (ctx.measureText(test).width <= maxWidth) {
+        current = test;
+      } else {
+        lines.push(current);
+        current = word;
+      }
     }
   }
-  lines.push(current);
+  if (current) lines.push(current);
   return lines;
 }
 
